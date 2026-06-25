@@ -1,6 +1,7 @@
 .gradle/
 build/
 */build/
+dist/
 local.properties
 
 # Local/generated artifacts
