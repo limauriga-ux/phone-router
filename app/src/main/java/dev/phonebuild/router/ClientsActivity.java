@@ -22,9 +22,11 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -323,22 +325,48 @@ public class ClientsActivity extends Activity {
 
     private Map<String, ClientInfo> parseClients(String text) {
         Map<String, ClientInfo> clients = new LinkedHashMap<>();
+        Set<String> currentClientMacs = new HashSet<>();
         boolean inArp = false;
+        boolean inNames = false;
+        boolean inTetherClients = false;
         for (String line : text.split("\\n")) {
             String trimmed = line.trim();
+            if (trimmed.startsWith("tethering clients:")) {
+                inTetherClients = true;
+                continue;
+            }
+            if (trimmed.startsWith("device names:")) {
+                inTetherClients = false;
+                inNames = true;
+                inArp = false;
+                continue;
+            }
             if (trimmed.startsWith("neighbor table:")) {
+                inTetherClients = false;
+                inNames = false;
                 inArp = false;
             }
             if (trimmed.startsWith("arp table:")) {
+                inTetherClients = false;
+                inNames = false;
                 inArp = true;
+                continue;
+            }
+            if (inTetherClients) {
+                parseCurrentClientLine(clients, currentClientMacs, trimmed);
+                continue;
+            }
+            if (inNames && !trimmed.isEmpty()) {
+                parseLeaseNameLine(clients, currentClientMacs, trimmed);
                 continue;
             }
             if (inArp && trimmed.matches("^\\d+\\.\\d+\\.\\d+\\.\\d+\\s+.*")) {
                 String[] parts = trimmed.split("\\s+");
-                if (parts.length >= 4) {
+                String mac = parts.length >= 4 ? parts[3].toLowerCase(Locale.US) : "";
+                if (parts.length >= 4 && currentClientMacs.contains(mac)) {
                     ClientInfo client = clientFor(clients, parts[3]);
                     client.ipv4 = parts[0];
-                    client.state = "在线";
+                    client.state = "0x0".equals(parts[2]) ? "失效" : "在线";
                 }
                 continue;
             }
@@ -353,7 +381,8 @@ public class ClientsActivity extends Activity {
                         break;
                     }
                 }
-                if (!mac.isEmpty()) {
+                String key = mac.toLowerCase(Locale.US);
+                if (!mac.isEmpty() && currentClientMacs.contains(key)) {
                     ClientInfo client = clientFor(clients, mac);
                     if (ip.contains(":")) {
                         client.ipv6Count++;
@@ -369,6 +398,48 @@ public class ClientsActivity extends Activity {
         return clients;
     }
 
+    private void parseCurrentClientLine(Map<String, ClientInfo> clients, Set<String> currentClientMacs, String line) {
+        int searchFrom = 0;
+        while (searchFrom < line.length()) {
+            int clientAt = line.indexOf("client: /", searchFrom);
+            if (clientAt < 0) {
+                break;
+            }
+            int ipStart = clientAt + "client: /".length();
+            int ipEnd = line.indexOf(' ', ipStart);
+            int macStart = ipEnd < 0 ? -1 : line.indexOf('(', ipEnd);
+            int macEnd = macStart < 0 ? -1 : line.indexOf(')', macStart);
+            if (ipEnd > ipStart && macStart >= 0 && macEnd > macStart) {
+                String ip = line.substring(ipStart, ipEnd);
+                String mac = line.substring(macStart + 1, macEnd).toLowerCase(Locale.US);
+                currentClientMacs.add(mac);
+                ClientInfo client = clientFor(clients, mac);
+                client.ipv4 = ip;
+                if ("未知".equals(client.state)) {
+                    client.state = "在线";
+                }
+                searchFrom = macEnd + 1;
+            } else {
+                searchFrom = clientAt + 1;
+            }
+        }
+    }
+
+    private void parseLeaseNameLine(Map<String, ClientInfo> clients, Set<String> currentClientMacs, String line) {
+        String[] parts = line.split("\\s+", 4);
+        String mac = parts.length >= 1 ? parts[0].toLowerCase(Locale.US) : "";
+        if (parts.length >= 3 && currentClientMacs.contains(mac)) {
+            ClientInfo client = clientFor(clients, parts[0]);
+            if (client.ipv4.isEmpty() && parts[1].matches("^\\d+\\.\\d+\\.\\d+\\.\\d+$")) {
+                client.ipv4 = parts[1];
+            }
+            if (!"*".equals(parts[2]) && !"-".equals(parts[2])) {
+                client.name = parts[2];
+                client.nameSource = parts.length >= 4 && parts[3].contains("dhcp-log") ? "DHCP 日志" : "DHCP 租约";
+            }
+        }
+    }
+
     private ClientInfo clientFor(Map<String, ClientInfo> clients, String mac) {
         String key = mac.toLowerCase(Locale.US);
         ClientInfo existing = clients.get(key);
@@ -377,6 +448,8 @@ public class ClientsActivity extends Activity {
         }
         ClientInfo created = new ClientInfo();
         created.mac = key;
+        created.name = "";
+        created.nameSource = "";
         created.state = "未知";
         created.ipv4 = "";
         clients.put(key, created);
@@ -390,7 +463,8 @@ public class ClientsActivity extends Activity {
         card.setBackground(panelBg(0xffeef4f0, 0xffdce2dd));
 
         TextView title = new TextView(this);
-        title.setText("设备 " + index + " · " + client.state);
+        String name = client.name.isEmpty() ? "未广播设备名" : client.name;
+        title.setText(name + " · " + client.state);
         title.setTextSize(15);
         title.setTextColor(0xff15201b);
         title.setTypeface(null, 1);
@@ -398,7 +472,8 @@ public class ClientsActivity extends Activity {
 
         TextView detail = new TextView(this);
         String ipv4 = client.ipv4.isEmpty() ? "未分配" : client.ipv4;
-        detail.setText("IPv4  " + ipv4 + "\nMAC   " + client.mac + "\nIPv6  " + client.ipv6Count + " 个地址");
+        String source = client.nameSource.isEmpty() ? unknownIdentityReason(client.mac) : client.nameSource;
+        detail.setText("编号  " + index + "\nIPv4  " + ipv4 + "\nMAC   " + client.mac + "\nIPv6  " + client.ipv6Count + " 个地址\n识别  " + source);
         detail.setTextSize(12);
         detail.setTextColor(0xff526158);
         detail.setTypeface(android.graphics.Typeface.MONOSPACE);
@@ -448,6 +523,22 @@ public class ClientsActivity extends Activity {
         if ("DELAY".equals(state) || "PROBE".equals(state)) return "探测中";
         if ("FAILED".equals(state)) return "失效";
         return state;
+    }
+
+    private String unknownIdentityReason(String mac) {
+        if (isLocalRandomMac(mac)) {
+            return "随机 MAC，且未广播 DHCP 主机名";
+        }
+        return "未从 DHCP/系统租约获取到名称";
+    }
+
+    private boolean isLocalRandomMac(String mac) {
+        try {
+            int first = Integer.parseInt(mac.substring(0, 2), 16);
+            return (first & 0x02) != 0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private String firstLine(String text) {
@@ -532,6 +623,8 @@ public class ClientsActivity extends Activity {
 
     private static class ClientInfo {
         String mac;
+        String name;
+        String nameSource;
         String ipv4;
         String state;
         int ipv6Count;

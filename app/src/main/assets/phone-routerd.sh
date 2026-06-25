@@ -853,6 +853,56 @@ clients() {
     show {print}
   ' || true
   log ""
+  log "device names:"
+  for lease_file in \
+    /data/misc/dhcp/dnsmasq.leases \
+    /data/misc/dhcp/*leases* \
+    /data/misc/apexdata/com.android.tethering/*leases* \
+    /data/misc/apexdata/com.android.tethering/*/*leases* \
+    /data/misc/apexdata/com.android.tethering/dhcp/*; do
+    [ -f "$lease_file" ] || continue
+    awk -v src="$lease_file" '
+      NF >= 4 && index($2, ":") > 0 && index($3, ".") > 0 {
+        name=$4
+        if (name != "" && name != "*" && name != "-") {
+          print tolower($2) " " $3 " " name " lease:" src
+        }
+      }
+    ' "$lease_file" 2>/dev/null || true
+  done
+  dumpsys network_stack 2>/dev/null | awk '
+    /\[wlan1\.DHCP\].*hwAddr:/ {
+      line=$0
+      while (index(line, "hwAddr: ") > 0) {
+        line=substr(line, index(line, "hwAddr: ") + 8)
+        mac=substr(line, 1, 17)
+        ip=""
+        host=""
+        rest=line
+        n=index(rest, "netAddr: ")
+        if (n > 0) {
+          net=substr(rest, n + 9)
+          split(net, addr, "/")
+          ip=addr[1]
+        }
+        h=index(rest, "hostname: ")
+        if (h > 0) {
+          hn=substr(rest, h + 10)
+          split(hn, names, "[, ]")
+          host=names[1]
+        }
+        if (mac != "" && ip != "" && host != "" && host != "null") {
+          key=tolower(mac)
+          latest[key]=key " " ip " " host " dhcp-log"
+        }
+        line=substr(line, 18)
+      }
+    }
+    END {
+      for (key in latest) print latest[key]
+    }
+  ' || true
+  log ""
   log "neighbor table:"
   ip neigh show dev "$down" 2>/dev/null || true
   log ""
