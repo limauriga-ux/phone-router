@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEVICE="${ANDROID_SERIAL:-e25c1394}"
+REMOTE="/data/local/tmp/phone-routerd.sh"
+REMOTE_API="/data/local/tmp/phone-router-api.sh"
+REMOTE_HANDLER="/data/local/tmp/phone-router-api-handler.sh"
+REMOTE_RULE_DIR="/data/local/phone-router/rules"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ANDROID_SERIAL=e25c1394 bin/phone-router <command> [args...]
+
+Host commands:
+  install                  push the router control script to the phone
+  start-api                start the root localhost API used by the app
+  stop-api                 stop the root localhost API
+  api-status               show the root localhost API status
+  install-app              build and install the Android control app
+
+Phone commands:
+  status                   show root, hotspot, proxy, and rule status
+  summary                  show machine-readable status summary
+  ap-status                show AP/tethering state
+  tether-status            show Android/manual tethering state
+  start-ap [ssid] [pass] [band]
+                           start SoftAP and try manual tether; band is 2, 5, 6, or any
+  stop-ap                  stop SoftAP
+  enable-tether            enable manual IPv4 forwarding/NAT for hotspot clients
+  disable-tether           remove manual tether forwarding/NAT rules
+  clients                  list known hotspot clients
+  prepare-clash-ports      add redir/tproxy ports to Clash Meta configs
+  proxy-global             start current redir proxy as global mode
+  proxy-rule               start redir proxy with China direct / foreign proxy routing
+  proxy-start              alias for proxy-global
+  proxy-stop               stop sing-box and phone-router proxy rules
+  enable-tproxy            transparent TCP/UDP proxy via Clash tproxy-port
+  enable-redir             transparent TCP proxy via Clash redir-port
+  disable                  remove all phone-router rules
+  blocks                   show blocked MACs/IPs
+  block-mac <mac>          block a hotspot client by MAC address
+  unblock-mac <mac>        unblock a MAC address
+  block-ip <ip>            block a hotspot client by IP address
+  unblock-ip <ip>          unblock an IP address
+  pause-all                block all hotspot forwarding/proxying
+  resume-all               remove the block-all switch
+
+Environment:
+  ANDROID_SERIAL           adb serial, defaults to e25c1394
+  DOWN_IFACE               hotspot interface override, normally auto-detected
+  UP_IFACE                 upstream interface override, normally auto-detected
+  TPROXY_PORT              Clash tproxy-port, default 7893
+  REDIR_PORT               Clash redir-port, default 7892
+  DNS_PORT                 Clash DNS listen port, default 1053
+EOF
+}
+
+adb_base() {
+  adb -s "$DEVICE" "$@"
+}
+
+wait_for_device() {
+  adb_base wait-for-device
+}
+
+ensure_root() {
+  wait_for_device
+  local id_out
+  id_out="$(adb_base shell id 2>/dev/null || true)"
+  if [[ "$id_out" != uid=0* ]]; then
+    adb_base root >/dev/null 2>&1 || true
+    sleep 1
+    wait_for_device
+  fi
+}
+
+install_remote() {
+  ensure_root
+  adb_base push "$ROOT_DIR/android/routerd.sh" "$REMOTE" >/dev/null
+  adb_base push "$ROOT_DIR/android/router-api.sh" "$REMOTE_API" >/dev/null
+  adb_base push "$ROOT_DIR/android/router-api-handler.sh" "$REMOTE_HANDLER" >/dev/null
+  adb_base shell mkdir -p "$REMOTE_RULE_DIR"
+  adb_base push "$ROOT_DIR/downloads/geosite-cn.srs" "$REMOTE_RULE_DIR/geosite-cn.srs" >/dev/null
+  adb_base push "$ROOT_DIR/downloads/geoip-cn.srs" "$REMOTE_RULE_DIR/geoip-cn.srs" >/dev/null
+  adb_base shell chmod 755 "$REMOTE"
+  adb_base shell chmod 755 "$REMOTE_API" "$REMOTE_HANDLER"
+  adb_base shell chmod 644 "$REMOTE_RULE_DIR/geosite-cn.srs" "$REMOTE_RULE_DIR/geoip-cn.srs"
+  echo "Installed $REMOTE on $DEVICE"
+}
+
+run_api() {
+  install_remote >/dev/null
+  adb_base shell "$REMOTE_API" "$1"
+}
+
+install_app() {
+  (cd "$ROOT_DIR" && gradle --no-daemon :app:assembleDebug >/dev/null)
+  adb_base install -r "$ROOT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+}
+
+main() {
+  if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+    usage
+    exit 0
+  fi
+
+  local cmd="$1"
+  shift
+
+  case "$cmd" in
+    install)
+      install_remote
+      ;;
+    start-api)
+      run_api start
+      ;;
+    stop-api)
+      run_api stop
+      ;;
+    api-status)
+      run_api status
+      ;;
+    install-app)
+      install_app
+      ;;
+    *)
+      install_remote >/dev/null
+      adb_base shell env \
+        "DOWN_IFACE=${DOWN_IFACE:-}" \
+        "UP_IFACE=${UP_IFACE:-}" \
+        "TPROXY_PORT=${TPROXY_PORT:-}" \
+        "REDIR_PORT=${REDIR_PORT:-}" \
+        "DNS_PORT=${DNS_PORT:-}" \
+        "$REMOTE" "$cmd" "$@"
+      ;;
+  esac
+}
+
+main "$@"

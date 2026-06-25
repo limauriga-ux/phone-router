@@ -1,0 +1,9 @@
+<resources>
+    <color name="ink">#15201B</color>
+    <color name="surface">#F7F8F4</color>
+    <color name="panel">#FFFFFF</color>
+    <color name="accent">#197C6B</color>
+    <color name="accent_dark">#0E4E44</color>
+    <color name="line">#DCE2DD</color>
+    <color name="launcher_background">#F4E7D4</color>
+</resources>

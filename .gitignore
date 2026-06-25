@@ -1,0 +1,25 @@
+.gradle/
+build/
+*/build/
+local.properties
+
+# Local/generated artifacts
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Device images and downloaded binaries
+backups/
+downloads/
+work/
+*.img
+*.tar.gz
+*.zip
+
+# Local secrets and exported configs
+*.bak
+*.backup
+*.tmp
+*sing-box-config*.json
