@@ -130,7 +130,7 @@ bin/phone-router blocks
 ## Hotspot And Tethering
 
 ```bash
-bin/phone-router start-ap PhoneRouter phonebuild888 2
+bin/phone-router start-ap <ssid> <passphrase> 5
 bin/phone-router stop-ap
 bin/phone-router enable-tether
 bin/phone-router disable-tether

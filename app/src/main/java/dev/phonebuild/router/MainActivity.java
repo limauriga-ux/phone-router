@@ -36,8 +36,11 @@ public class MainActivity extends Activity {
     private static final String BASE_URL = "http://127.0.0.1:19777";
     private static final String PREFS = "phone_router_settings";
     private static final String DEFAULT_AP_SSID = "PhoneRouter";
-    private static final String DEFAULT_AP_PASS = "phonebuild888";
-    private static final String DEFAULT_AP_BAND = "2";
+    private static final String DEFAULT_AP_PASS = "changeMe888";
+    private static final String DEFAULT_AP_BAND = "5";
+    private static final String LEGACY_AP_SSID = "PhoneRouter";
+    private static final String LEGACY_AP_PASS = "phonebuild888";
+    private static final String LEGACY_AP_BAND = "2";
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -61,6 +64,12 @@ public class MainActivity extends Activity {
         loadApSettings();
         setContentView(buildUi());
         call("/summary", true);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshSummary();
     }
 
     @Override
@@ -135,6 +144,10 @@ public class MainActivity extends Activity {
         quickStopRow.addView(button("暂停上网", v -> call("/pause-all", true), 0xffa15c18));
         quickStopRow.addView(button("恢复上网", v -> call("/resume-all", true), 0xff197c6b));
         quick.addView(quickStopRow, marginTop(-1, 8));
+        LinearLayout persistRow = row();
+        persistRow.addView(button("固化当前方案", v -> persistCurrentProfile(), 0xff0e4e44));
+        persistRow.addView(button("恢复固化方案", v -> call("/restore-persist", true), 0xff526158));
+        quick.addView(persistRow, marginTop(-1, 8));
 
         LinearLayout proxy = section(root, "代理", "模式、内核状态和日志", true);
         LinearLayout proxyModeRow = row();
@@ -363,6 +376,9 @@ public class MainActivity extends Activity {
         apSsid = prefs.getString("ap_ssid", DEFAULT_AP_SSID);
         apPass = prefs.getString("ap_pass", DEFAULT_AP_PASS);
         apBand = prefs.getString("ap_band", DEFAULT_AP_BAND);
+        if (LEGACY_AP_SSID.equals(apSsid) && LEGACY_AP_PASS.equals(apPass) && LEGACY_AP_BAND.equals(apBand)) {
+            saveApSettings(DEFAULT_AP_SSID, DEFAULT_AP_PASS, DEFAULT_AP_BAND);
+        }
     }
 
     private void saveApSettings(String ssid, String pass, String band) {
@@ -468,6 +484,13 @@ public class MainActivity extends Activity {
             return;
         }
         call("/start-ap/" + apSsid + "/" + apPass + "/" + apBand, true);
+    }
+
+    private void persistCurrentProfile() {
+        if (!validateApSettings(apSsid, apPass, apBand)) {
+            return;
+        }
+        call("/persist/" + apSsid + "/" + apPass + "/" + apBand + "/global", true);
     }
 
     private void call(String path, boolean updateStatus) {
@@ -688,12 +711,16 @@ public class MainActivity extends Activity {
         String clients = valueOf(text, "clients");
         String node = valueOf(text, "node");
 
-        rootValue.setText(translate(root));
-        apValue.setText(translate(ap) + "\n" + iface);
-        proxyValue.setText(proxyLabel(proxy, routeMode));
-        accessValue.setText(accessLabel(paused));
-        clientsValue.setText(clients + " 台");
-        nodeValue.setText(shortNode(node));
+        rootValue.setText(displayValue(translate(root)));
+        apValue.setText(displayValue(translate(ap)) + "\n" + displayValue(iface));
+        proxyValue.setText(displayValue(proxyLabel(proxy, routeMode)));
+        accessValue.setText(displayValue(accessLabel(paused)));
+        clientsValue.setText(displayValue(clients) + " 台");
+        nodeValue.setText(displayValue(shortNode(node)));
+    }
+
+    private String displayValue(String value) {
+        return value == null || value.isEmpty() ? "未知" : value;
     }
 
     private String translate(String value) {

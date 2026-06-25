@@ -67,6 +67,19 @@ case "$path" in
   /stop-ap) run_router stop-ap ;;
   /enable-tether) run_router enable-tether ;;
   /disable-tether) run_router disable-tether ;;
+  /persist/*)
+    args="${path#/persist/}"
+    oldifs="$IFS"
+    IFS='/'
+    set -- $args
+    IFS="$oldifs"
+    valid_arg "${1:-}" || { send_response 400 BAD_REQUEST "invalid SSID"; exit 0; }
+    valid_arg "${2:-}" || { send_response 400 BAD_REQUEST "invalid passphrase"; exit 0; }
+    valid_arg "${3:-5}" || { send_response 400 BAD_REQUEST "invalid band"; exit 0; }
+    valid_arg "${4:-global}" || { send_response 400 BAD_REQUEST "invalid proxy mode"; exit 0; }
+    run_router persist "$1" "$2" "${3:-5}" "${4:-global}"
+    ;;
+  /restore-persist) run_router restore-persist ;;
   /clients) run_router clients ;;
   /blocks) run_router blocks ;;
   /prepare-clash-ports) run_router prepare-clash-ports ;;
@@ -93,8 +106,8 @@ case "$path" in
     IFS="$oldifs"
     valid_arg "${1:-}" || { send_response 400 BAD_REQUEST "invalid SSID"; exit 0; }
     valid_arg "${2:-}" || { send_response 400 BAD_REQUEST "invalid passphrase"; exit 0; }
-    valid_arg "${3:-2}" || { send_response 400 BAD_REQUEST "invalid band"; exit 0; }
-    run_router start-ap "$1" "$2" "${3:-2}"
+    valid_arg "${3:-5}" || { send_response 400 BAD_REQUEST "invalid band"; exit 0; }
+    run_router start-ap "$1" "$2" "${3:-5}"
     ;;
   /singbox-set-node/*)
     value="${path#/singbox-set-node/}"

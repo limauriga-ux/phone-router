@@ -22,8 +22,12 @@ DNS_PORT="${DNS_PORT:-1053}"
 DOWN_IFACE="${DOWN_IFACE:-}"
 UP_IFACE="${UP_IFACE:-}"
 AP_SSID="${AP_SSID:-PhoneRouter}"
-AP_PASSPHRASE="${AP_PASSPHRASE:-phonebuild888}"
-AP_BAND="${AP_BAND:-2}"
+AP_PASSPHRASE="${AP_PASSPHRASE:-changeMe888}"
+AP_BAND="${AP_BAND:-5}"
+PERSIST_CONF="$STATE_DIR/persist.conf"
+PERSIST_ROUTERD="$STATE_DIR/phone-routerd.sh"
+API_SCRIPT="/data/local/tmp/phone-router-api.sh"
+BOOT_SCRIPT="/data/adb/service.d/phone-router.sh"
 IP_FORWARD_PREV="$STATE_DIR/ip_forward.prev"
 SING_BOX_BIN="${SING_BOX_BIN:-$STATE_DIR/sing-box}"
 SING_BOX_CONFIG="${SING_BOX_CONFIG:-$STATE_DIR/sing-box.json}"
@@ -204,6 +208,26 @@ add_bypass_rules() {
   ipt -t mangle -A "$chain" -d 240.0.0.0/4 -j RETURN
 }
 
+add_nat_bypass_rules() {
+  chain="$1"
+  ipt -t nat -A "$chain" -d 0.0.0.0/8 -j RETURN
+  ipt -t nat -A "$chain" -d 10.0.0.0/8 -j RETURN
+  ipt -t nat -A "$chain" -d 100.64.0.0/10 -j RETURN
+  ipt -t nat -A "$chain" -d 127.0.0.0/8 -j RETURN
+  ipt -t nat -A "$chain" -d 169.254.0.0/16 -j RETURN
+  ipt -t nat -A "$chain" -d 172.16.0.0/12 -j RETURN
+  ipt -t nat -A "$chain" -d 192.168.0.0/16 -j RETURN
+  ipt -t nat -A "$chain" -d 224.0.0.0/4 -j RETURN
+  ipt -t nat -A "$chain" -d 240.0.0.0/4 -j RETURN
+}
+
+is_safe_token() {
+  case "$1" in
+    *[!A-Za-z0-9:._-]*|'') return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 apply_acl_rules() {
   table="$1"
   chain="$2"
@@ -230,10 +254,10 @@ apply_base_filter() {
   ensure_jump filter FORWARD "$FILTER_CHAIN"
 }
 
-apply_leak_guard() {
+apply_ipv6_downstream_guard() {
   down="$(detect_down_iface)"
-  apply_base_filter
-  ipt -t filter -A "$FILTER_CHAIN" -i "$down" -p udp ! --dport 53 -j REJECT
+  sysctl -w net.ipv6.conf.all.forwarding=0 >/dev/null 2>&1 || true
+  sysctl -w "net.ipv6.conf.$down.disable_ipv6=1" >/dev/null 2>&1 || true
 
   if command -v ip6tables >/dev/null 2>&1; then
     ip6_chain_exists "$IP6_FILTER_CHAIN" || ip6t -N "$IP6_FILTER_CHAIN"
@@ -244,6 +268,13 @@ apply_leak_guard() {
       ip6t -I FORWARD 1 -j "$IP6_FILTER_CHAIN"
     fi
   fi
+}
+
+apply_leak_guard() {
+  down="$(detect_down_iface)"
+  apply_base_filter
+  ipt -t filter -A "$FILTER_CHAIN" -i "$down" -p udp ! --dport 53 -j REJECT
+  apply_ipv6_downstream_guard
 }
 
 save_ip_forward() {
@@ -722,6 +753,7 @@ enable_tproxy() {
   down="$(detect_down_iface)"
 
   apply_base_filter
+  apply_ipv6_downstream_guard
   apply_dns_hijack
 
   ensure_chain mangle "$MANGLE_CHAIN"
@@ -755,6 +787,7 @@ enable_redir() {
   ensure_jump mangle PREROUTING "$MANGLE_CHAIN"
 
   apply_dns_hijack
+  add_nat_bypass_rules "$NAT_CHAIN"
   ipt -t nat -A "$NAT_CHAIN" -p tcp -j REDIRECT --to-ports "$REDIR_PORT"
 
   log "enabled redir mode on $down: redir=$REDIR_PORT dns=$DNS_PORT"
@@ -971,22 +1004,12 @@ client_count() {
     }
   ')"
   if [ "$count" = "0" ]; then
-    count="$(dumpsys tethering 2>/dev/null | awk '
-      /client: \// {
-        line = $0
-        while (match(line, /client: \\/[^ ]+ \\([0-9A-Fa-f:]+\\)/)) {
-          mac = substr(line, RSTART, RLENGTH)
-          sub(/.*\\(/, "", mac)
-          sub(/\\).*/, "", mac)
-          seen[tolower(mac)] = 1
-          line = substr(line, RSTART + RLENGTH)
-        }
-      }
-      END {
-        for (item in seen) count++
-        print count + 0
-      }
-    ')"
+    count="$(dumpsys tethering 2>/dev/null \
+      | grep -Eo '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}' \
+      | tr '[:upper:]' '[:lower:]' \
+      | sort -u \
+      | wc -l \
+      | tr -d ' ')"
   fi
   if [ "$count" = "0" ]; then
     count="$(ip neigh show dev "$down" 2>/dev/null | awk '
@@ -1103,6 +1126,7 @@ start_ap() {
   cmd wifi start-softap "$ssid" wpa2 "$pass" -b "$band"
   log "ap start requested: ssid=$ssid band=$band"
   try_enable_tether
+  apply_ipv6_downstream_guard || true
   ap_status
 }
 
@@ -1111,6 +1135,98 @@ stop_ap() {
   cmd wifi stop-softap
   log "ap stop requested"
   ap_status
+}
+
+write_persist_config() {
+  ssid="$1"
+  pass="$2"
+  band="$3"
+  mode="$4"
+  {
+    printf "AP_SSID='%s'\n" "$ssid"
+    printf "AP_PASSPHRASE='%s'\n" "$pass"
+    printf "AP_BAND='%s'\n" "$band"
+    printf "PROXY_MODE='%s'\n" "$mode"
+  } > "$PERSIST_CONF"
+  chmod 600 "$PERSIST_CONF"
+}
+
+persist_setup() {
+  require_root
+  init_state
+  ssid="${1:-$AP_SSID}"
+  pass="${2:-$AP_PASSPHRASE}"
+  band="${3:-$AP_BAND}"
+  mode="${4:-global}"
+
+  is_safe_token "$ssid" || die "invalid ssid"
+  is_safe_token "$pass" || die "invalid passphrase"
+  is_safe_token "$band" || die "invalid band"
+  [ ${#pass} -ge 8 ] || die "WPA2 passphrase must be at least 8 characters"
+  case "$band" in 2|5|6|any) ;; *) die "invalid band: $band" ;; esac
+  case "$mode" in global|rule|off) ;; *) die "invalid proxy mode: $mode" ;; esac
+
+  cp "$0" "$PERSIST_ROUTERD"
+  chmod 755 "$PERSIST_ROUTERD"
+  write_persist_config "$ssid" "$pass" "$band" "$mode"
+
+  mkdir -p /data/adb/service.d
+  cat > "$BOOT_SCRIPT" <<'EOF'
+#!/system/bin/sh
+STATE_DIR="/data/local/phone-router"
+ROUTERD="$STATE_DIR/phone-routerd.sh"
+LOG="$STATE_DIR/boot.log"
+
+{
+  echo "phone-router boot restore: $(date)"
+  for i in $(seq 1 90); do
+    [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ] && break
+    sleep 2
+  done
+  sleep 5
+  [ -x "$ROUTERD" ] || exit 0
+  "$ROUTERD" restore-persist
+  if [ -x /data/local/tmp/phone-router-api.sh ]; then
+    /data/local/tmp/phone-router-api.sh restart
+  fi
+} >> "$LOG" 2>&1 &
+EOF
+  chmod 755 "$BOOT_SCRIPT"
+
+  log "persisted phone-router profile"
+  log "ssid=$ssid"
+  log "band=$band"
+  log "proxy_mode=$mode"
+  log "config=$PERSIST_CONF"
+  log "routerd=$PERSIST_ROUTERD"
+  log "api=$API_SCRIPT"
+  log "boot_script=$BOOT_SCRIPT"
+}
+
+restore_persist() {
+  require_root
+  init_state
+  [ -f "$PERSIST_CONF" ] || die "persist config not found: $PERSIST_CONF"
+  # shellcheck disable=SC1090
+  . "$PERSIST_CONF"
+  ssid="${AP_SSID:-$AP_SSID}"
+  pass="${AP_PASSPHRASE:-$AP_PASSPHRASE}"
+  band="${AP_BAND:-$AP_BAND}"
+  mode="${PROXY_MODE:-global}"
+
+  svc data enable 2>/dev/null || true
+  svc wifi disable 2>/dev/null || true
+  cmd wifi stop-softap 2>/dev/null || true
+  sleep 2
+  start_ap "$ssid" "$pass" "$band"
+
+  case "$mode" in
+    global) proxy_start_mode global ;;
+    rule) proxy_start_mode rule ;;
+    off) log "proxy restore skipped: off" ;;
+    *) die "invalid persisted proxy mode: $mode" ;;
+  esac
+  summary
 }
 
 status() {
@@ -1186,6 +1302,8 @@ case "${1:-help}" in
   tether-status) tether_status ;;
   start-ap) start_ap "${2:-}" "${3:-}" "${4:-}" ;;
   stop-ap) stop_ap ;;
+  persist) persist_setup "${2:-}" "${3:-}" "${4:-}" "${5:-global}" ;;
+  restore-persist) restore_persist ;;
   enable-tether) enable_tether ;;
   disable-tether) disable_tether ;;
   clients) clients ;;
@@ -1278,6 +1396,8 @@ phone-routerd commands:
   tether-status
   start-ap [ssid] [passphrase] [2|5|6|any]
   stop-ap
+  persist [ssid] [passphrase] [2|5|6|any] [global|rule|off]
+  restore-persist
   enable-tether
   disable-tether
 EOF
