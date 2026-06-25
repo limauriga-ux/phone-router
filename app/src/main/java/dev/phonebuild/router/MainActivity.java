@@ -96,7 +96,7 @@ public class MainActivity extends Activity {
         hero.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("e25c1394 · AP / 代理 / 客户端控制");
+        subtitle.setText("AP / 代理 / 客户端控制");
         subtitle.setTextSize(13);
         subtitle.setTextColor(0xffc8d6d0);
         hero.addView(subtitle, marginTop(-1, 2));

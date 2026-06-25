@@ -51,7 +51,7 @@ die() {
 }
 
 require_root() {
-  [ "$(id -u)" = "0" ] || die "root adb shell is required; run: adb -s e25c1394 root"
+  [ "$(id -u)" = "0" ] || die "root adb shell is required; run adb root or use an app-visible su provider"
 }
 
 init_state() {

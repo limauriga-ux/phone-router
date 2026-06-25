@@ -1,88 +1,118 @@
-# Phone Router for `e25c1394`
+# Phone Router
 
-This repository contains a small control layer for turning the Xiaomi Mi 9 Lite
-(`e25c1394`, LineageOS Android 15, arm64) into a phone-only travel router.
+Android phone-only travel router control app and root helper scripts.
 
-The phone keeps using Android's own cellular tethering/AP stack. The scripts add
-router-style controls on top:
+The app uses Android's hotspot/tethering stack for AP access, then adds a
+root-controlled routing layer on top:
 
-- show hotspot clients from tethering, neighbor, and ARP state
-- block/unblock clients by MAC or IP
-- pause/resume all client Internet access
-- DNS hijack to Clash Meta DNS
-- transparent proxy via Clash Meta `tproxy-port` or `redir-port`
+- Start/stop hotspot and manual tethering helpers
+- Show AP clients and block/unblock by MAC or IP
+- Pause/resume all AP client Internet access
+- Run sing-box as the proxy core
+- Switch sing-box nodes from the app
+- Switch between global proxy mode and China-direct rule mode
+- View sing-box logs and client state from dedicated pages
+- Import a complete sing-box JSON config from the phone
 
-No system partition files are modified. All firewall rules live in dedicated
-`PHONE_ROUTER_*` chains and can be removed with `bin/phone-router disable`.
+No system partition files are modified. Firewall rules are installed in
+dedicated `PHONE_ROUTER_*` chains and can be removed with:
 
-## Current Device Findings
+```bash
+bin/phone-router disable
+```
 
-- Device: Xiaomi Mi 9 Lite / `pyxis`
-- ROM: LineageOS Android 15
-- ABI: `arm64-v8a`
-- `adb root`: works
-- Kernel supports: `TPROXY`, `REDIRECT`, MAC matching, `tc`
-- Installed proxy app: `com.github.metacubex.clash.meta`
-- OpenClaw is already running in proot and listening on localhost `18789`
+## Requirements
+
+- Android phone with root access through Magisk, KernelSU, APatch, or `adb root`
+- Android SDK platform tools available on the host
+- A sing-box Android arm64 binary installed on the phone at:
+
+```text
+/data/local/phone-router/sing-box
+```
+
+The project currently uses sing-box directly. Clash Meta is not required for
+the app's normal proxy modes.
 
 ## Quick Start
 
-```bash
-cd /Users/aurigalim/Documents/phone-build
-bin/phone-router status
-```
-
-## Phone App
-
-Build and install the on-phone control app:
+Set your device serial when more than one Android device is connected:
 
 ```bash
-bin/phone-router install-app
+export ANDROID_SERIAL=<your-device-serial>
 ```
 
-Start the root localhost API from ADB:
+Install the helper scripts:
+
+```bash
+bin/phone-router install
+```
+
+Start the root localhost API used by the app:
 
 ```bash
 bin/phone-router start-api
 ```
 
+Build and install the Android control app:
+
+```bash
+bin/phone-router install-app
+```
+
 Then open **Phone Router** on the phone.
 
-The app also has a **Start Root** button. If the phone has Magisk, KernelSU,
-APatch, or another `su` provider, the app can copy the bundled scripts to
-`/data/local/tmp` and start the root localhost API itself. On the current
-`e25c1394` build, `adb root` works but no app-visible `su` binary was found, so
-the ADB startup path is still required unless a root manager is installed.
+The app also has a **Start Root** button. If the phone has an app-visible `su`
+provider, the app can copy the bundled scripts to `/data/local/tmp` and start
+the root localhost API itself.
 
-Prepare Clash Meta profiles so the core exposes router ports:
+## Proxy Modes
 
-```bash
-bin/phone-router prepare-clash-ports
-```
-
-Then restart or reload Clash Meta on the phone. The command backs up each config
-before changing it and adds these top-level keys when missing:
-
-```yaml
-allow-lan: true
-bind-address: '*'
-redir-port: 7892
-tproxy-port: 7893
-```
-
-After the Android hotspot is on and Clash Meta is running, enable transparent
-proxying:
+Global mode:
 
 ```bash
-bin/phone-router enable-tproxy
+bin/phone-router proxy-global
 ```
 
-If UDP/TProxy causes trouble, use TCP-only redirection instead:
+Rule mode:
 
 ```bash
-bin/phone-router disable
-bin/phone-router enable-redir
+bin/phone-router proxy-rule
 ```
+
+Rule mode routes China domain/IP traffic directly and sends other traffic
+through the selected sing-box node. The China rule sets bundled in the app come
+from MetaCubeX `meta-rules-dat` sing-box rule-set exports.
+
+Stop proxying:
+
+```bash
+bin/phone-router proxy-stop
+```
+
+## Node Config
+
+List nodes:
+
+```bash
+bin/phone-router singbox-nodes
+```
+
+Switch node:
+
+```bash
+bin/phone-router singbox-set-node <node-tag>
+```
+
+Import a complete sing-box config already copied onto the phone:
+
+```bash
+bin/phone-router singbox-import-config /sdcard/Download/sing-box.json
+```
+
+The imported config is checked with `sing-box check` before it replaces the
+active global config. Existing configs are backed up under
+`/data/local/phone-router`.
 
 ## Client Management
 
@@ -97,28 +127,24 @@ bin/phone-router resume-all
 bin/phone-router blocks
 ```
 
-## Recovery
-
-Remove all firewall and policy-routing state added by this project:
+## Hotspot And Tethering
 
 ```bash
-bin/phone-router disable
+bin/phone-router start-ap PhoneRouter phonebuild888 2
+bin/phone-router stop-ap
+bin/phone-router enable-tether
+bin/phone-router disable-tether
+bin/phone-router tether-status
 ```
 
 If Android chooses a different hotspot interface, override detection:
 
 ```bash
-DOWN_IFACE=wlan0 bin/phone-router enable-tproxy
+DOWN_IFACE=wlan0 bin/phone-router proxy-rule
 ```
 
-## Notes
+## Legacy Clash Helper
 
-`enable-tproxy` is the preferred router-like mode because it can catch TCP and
-UDP from hotspot clients. It requires Clash Meta to actually listen on
-`tproxy-port: 7893`.
-
-`enable-redir` is simpler and catches TCP only. It requires `redir-port: 7892`.
-
-The first version intentionally does not implement per-client bandwidth quotas.
-This phone has `tc`, so shaping can be added later, but client-specific shaping
-on Android tethering needs more care than block/unblock rules.
+The repository still contains `prepare-clash-ports` for old Clash Meta testing
+profiles, but this is not part of the current app flow and is not required when
+using the built-in sing-box integration.

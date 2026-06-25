@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEVICE="${ANDROID_SERIAL:-e25c1394}"
+DEVICE="${ANDROID_SERIAL:-}"
 REMOTE="/data/local/tmp/phone-routerd.sh"
 REMOTE_API="/data/local/tmp/phone-router-api.sh"
 REMOTE_HANDLER="/data/local/tmp/phone-router-api-handler.sh"
@@ -11,7 +11,7 @@ REMOTE_RULE_DIR="/data/local/phone-router/rules"
 usage() {
   cat <<'EOF'
 Usage:
-  ANDROID_SERIAL=e25c1394 bin/phone-router <command> [args...]
+  ANDROID_SERIAL=<device-serial> bin/phone-router <command> [args...]
 
 Host commands:
   install                  push the router control script to the phone
@@ -48,7 +48,7 @@ Phone commands:
   resume-all               remove the block-all switch
 
 Environment:
-  ANDROID_SERIAL           adb serial, defaults to e25c1394
+  ANDROID_SERIAL           adb serial; omit only when one device is connected
   DOWN_IFACE               hotspot interface override, normally auto-detected
   UP_IFACE                 upstream interface override, normally auto-detected
   TPROXY_PORT              Clash tproxy-port, default 7893
@@ -58,7 +58,11 @@ EOF
 }
 
 adb_base() {
-  adb -s "$DEVICE" "$@"
+  if [[ -n "$DEVICE" ]]; then
+    adb -s "$DEVICE" "$@"
+  else
+    adb "$@"
+  fi
 }
 
 wait_for_device() {
@@ -87,7 +91,7 @@ install_remote() {
   adb_base shell chmod 755 "$REMOTE"
   adb_base shell chmod 755 "$REMOTE_API" "$REMOTE_HANDLER"
   adb_base shell chmod 644 "$REMOTE_RULE_DIR/geosite-cn.srs" "$REMOTE_RULE_DIR/geoip-cn.srs"
-  echo "Installed $REMOTE on $DEVICE"
+  echo "Installed $REMOTE"
 }
 
 run_api() {

@@ -1,6 +1,7 @@
 package dev.phonebuild.router;
 
 import android.app.Activity;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -21,6 +22,9 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -39,8 +43,13 @@ public class ClientsActivity extends Activity {
     };
 
     private TextView statusText;
-    private TextView clientsText;
-    private TextView blocksText;
+    private TextView countText;
+    private TextView pauseText;
+    private TextView macBlocksText;
+    private TextView ipBlocksText;
+    private TextView rawText;
+    private LinearLayout clientsList;
+    private LinearLayout rawBody;
     private EditText macInput;
     private EditText ipInput;
     private boolean active;
@@ -102,11 +111,28 @@ public class ClientsActivity extends Activity {
         topRow.addView(button("立即刷新", v -> refreshAll(), 0xff197c6b));
         root.addView(topRow, marginTop(-1, 12));
 
-        clientsText = textPanel("正在加载客户端...");
-        root.addView(section("已连接客户端", clientsText), marginTop(-1, 12));
+        LinearLayout summary = new LinearLayout(this);
+        summary.setOrientation(LinearLayout.HORIZONTAL);
+        countText = summaryTile(summary, "在线设备", "...");
+        pauseText = summaryTile(summary, "上网控制", "...");
+        root.addView(summary, marginTop(-1, 12));
 
-        blocksText = textPanel("正在加载黑名单...");
-        root.addView(section("黑名单", blocksText), marginTop(-1, 12));
+        LinearLayout clientsPanel = panel();
+        clientsPanel.addView(label("已连接客户端"));
+        clientsList = new LinearLayout(this);
+        clientsList.setOrientation(LinearLayout.VERTICAL);
+        clientsPanel.addView(clientsList, marginTop(-1, 8));
+        root.addView(clientsPanel, marginTop(-1, 12));
+
+        LinearLayout blocksPanel = panel();
+        blocksPanel.addView(label("黑名单"));
+        LinearLayout blockRow = row();
+        macBlocksText = smallInfo("MAC\n-");
+        ipBlocksText = smallInfo("IP\n-");
+        blockRow.addView(macBlocksText);
+        blockRow.addView(ipBlocksText);
+        blocksPanel.addView(blockRow, marginTop(-1, 8));
+        root.addView(blocksPanel, marginTop(-1, 12));
 
         LinearLayout macPanel = panel();
         macPanel.addView(label("按 MAC 管控"));
@@ -129,22 +155,37 @@ public class ClientsActivity extends Activity {
         ipPanel.addView(ipRow, marginTop(-1, 8));
         root.addView(ipPanel, marginTop(-1, 12));
 
-        return scroll;
-    }
+        LinearLayout rawPanel = collapsiblePanel("原始详情", false);
+        rawText = textPanel("正在加载...");
+        rawBody.addView(rawText, marginTop(-1, 8));
+        root.addView(rawPanel, marginTop(-1, 12));
 
-    private LinearLayout section(String title, TextView content) {
-        LinearLayout panel = panel();
-        panel.addView(label(title));
-        panel.addView(content, marginTop(-1, 8));
-        return panel;
+        return scroll;
     }
 
     private LinearLayout panel() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(14), dp(12), dp(14), dp(14));
-        panel.setBackgroundColor(0xffffffff);
+        panel.setBackground(panelBg(0xffffffff, 0xffdce2dd));
         return panel;
+    }
+
+    private LinearLayout collapsiblePanel(String title, boolean expanded) {
+        LinearLayout outer = panel();
+        TextView header = label((expanded ? "▾ " : "▸ ") + title);
+        outer.addView(header);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        outer.addView(body);
+        header.setOnClickListener(v -> {
+            boolean visible = body.getVisibility() == View.VISIBLE;
+            body.setVisibility(visible ? View.GONE : View.VISIBLE);
+            header.setText((visible ? "▸ " : "▾ ") + title);
+        });
+        rawBody = body;
+        return outer;
     }
 
     private TextView label(String text) {
@@ -165,6 +206,45 @@ public class ClientsActivity extends Activity {
         view.setPadding(dp(12), dp(10), dp(12), dp(10));
         view.setBackgroundColor(0xffeef4f0);
         return view;
+    }
+
+    private TextView smallInfo(String text) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(13);
+        view.setTextColor(0xff15201b);
+        view.setPadding(dp(12), dp(10), dp(12), dp(10));
+        view.setBackground(panelBg(0xffeef4f0, 0xffdce2dd));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        params.setMargins(dp(4), 0, dp(4), 0);
+        view.setLayoutParams(params);
+        return view;
+    }
+
+    private TextView summaryTile(LinearLayout row, String label, String value) {
+        LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setPadding(dp(12), dp(10), dp(12), dp(10));
+        tile.setBackground(panelBg(0xffffffff, 0xffdce2dd));
+
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextSize(11);
+        labelView.setTextColor(0xff526158);
+        labelView.setTypeface(null, 1);
+        tile.addView(labelView);
+
+        TextView valueView = new TextView(this);
+        valueView.setText(value);
+        valueView.setTextSize(20);
+        valueView.setTextColor(0xff15201b);
+        valueView.setTypeface(null, 1);
+        tile.addView(valueView, marginTop(-1, 2));
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        params.setMargins(dp(4), 0, dp(4), 0);
+        row.addView(tile, params);
+        return valueView;
     }
 
     private EditText input(String hint) {
@@ -192,8 +272,9 @@ public class ClientsActivity extends Activity {
                 if (!active) {
                     return;
                 }
-                clientsText.setText(clients.isEmpty() ? "暂无客户端信息" : clients);
-                blocksText.setText(blocks.isEmpty() ? "暂无黑名单信息" : blocks);
+                renderClients(clients);
+                renderBlocks(blocks);
+                rawText.setText((clients.isEmpty() ? "暂无客户端信息" : clients) + "\n\n" + (blocks.isEmpty() ? "暂无黑名单信息" : blocks));
                 statusText.setText("自动刷新：3 秒");
             });
         });
@@ -218,11 +299,155 @@ public class ClientsActivity extends Activity {
                 if (!active) {
                     return;
                 }
-                clientsText.setText(clients.isEmpty() ? "暂无客户端信息" : clients);
-                blocksText.setText(blocks.isEmpty() ? "暂无黑名单信息" : blocks);
+                renderClients(clients);
+                renderBlocks(blocks);
+                rawText.setText((clients.isEmpty() ? "暂无客户端信息" : clients) + "\n\n" + (blocks.isEmpty() ? "暂无黑名单信息" : blocks));
                 statusText.setText(result.isEmpty() ? "已完成" : firstLine(result));
             });
         });
+    }
+
+    private void renderClients(String text) {
+        Map<String, ClientInfo> clients = parseClients(text);
+        clientsList.removeAllViews();
+        countText.setText(clients.size() + " 台");
+        if (clients.isEmpty()) {
+            clientsList.addView(emptyText("暂无在线客户端"));
+            return;
+        }
+        int index = 1;
+        for (ClientInfo client : clients.values()) {
+            clientsList.addView(clientCard(index++, client), marginTop(-1, clientsList.getChildCount() == 0 ? 0 : 8));
+        }
+    }
+
+    private Map<String, ClientInfo> parseClients(String text) {
+        Map<String, ClientInfo> clients = new LinkedHashMap<>();
+        boolean inArp = false;
+        for (String line : text.split("\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("neighbor table:")) {
+                inArp = false;
+            }
+            if (trimmed.startsWith("arp table:")) {
+                inArp = true;
+                continue;
+            }
+            if (inArp && trimmed.matches("^\\d+\\.\\d+\\.\\d+\\.\\d+\\s+.*")) {
+                String[] parts = trimmed.split("\\s+");
+                if (parts.length >= 4) {
+                    ClientInfo client = clientFor(clients, parts[3]);
+                    client.ipv4 = parts[0];
+                    client.state = "在线";
+                }
+                continue;
+            }
+            if (trimmed.contains(" lladdr ")) {
+                String[] parts = trimmed.split("\\s+");
+                String ip = parts.length > 0 ? parts[0] : "";
+                String mac = "";
+                String state = parts.length > 0 ? parts[parts.length - 1] : "";
+                for (int i = 0; i < parts.length - 1; i++) {
+                    if ("lladdr".equals(parts[i])) {
+                        mac = parts[i + 1];
+                        break;
+                    }
+                }
+                if (!mac.isEmpty()) {
+                    ClientInfo client = clientFor(clients, mac);
+                    if (ip.contains(":")) {
+                        client.ipv6Count++;
+                    } else if (client.ipv4.isEmpty()) {
+                        client.ipv4 = ip;
+                    }
+                    if (!state.isEmpty()) {
+                        client.state = translateNeighborState(state);
+                    }
+                }
+            }
+        }
+        return clients;
+    }
+
+    private ClientInfo clientFor(Map<String, ClientInfo> clients, String mac) {
+        String key = mac.toLowerCase(Locale.US);
+        ClientInfo existing = clients.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        ClientInfo created = new ClientInfo();
+        created.mac = key;
+        created.state = "未知";
+        created.ipv4 = "";
+        clients.put(key, created);
+        return created;
+    }
+
+    private View clientCard(int index, ClientInfo client) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        card.setBackground(panelBg(0xffeef4f0, 0xffdce2dd));
+
+        TextView title = new TextView(this);
+        title.setText("设备 " + index + " · " + client.state);
+        title.setTextSize(15);
+        title.setTextColor(0xff15201b);
+        title.setTypeface(null, 1);
+        card.addView(title);
+
+        TextView detail = new TextView(this);
+        String ipv4 = client.ipv4.isEmpty() ? "未分配" : client.ipv4;
+        detail.setText("IPv4  " + ipv4 + "\nMAC   " + client.mac + "\nIPv6  " + client.ipv6Count + " 个地址");
+        detail.setTextSize(12);
+        detail.setTextColor(0xff526158);
+        detail.setTypeface(android.graphics.Typeface.MONOSPACE);
+        card.addView(detail, marginTop(-1, 6));
+        return card;
+    }
+
+    private TextView emptyText(String text) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(13);
+        view.setTextColor(0xff526158);
+        view.setPadding(dp(12), dp(10), dp(12), dp(10));
+        view.setBackground(panelBg(0xffeef4f0, 0xffdce2dd));
+        return view;
+    }
+
+    private void renderBlocks(String text) {
+        macBlocksText.setText("MAC\n" + parseBlockSection(text, "blocked MACs:"));
+        ipBlocksText.setText("IP\n" + parseBlockSection(text, "blocked IPs:"));
+        pauseText.setText(text.contains("pause-all: enabled") ? "暂停" : "允许");
+    }
+
+    private String parseBlockSection(String text, String header) {
+        StringBuilder builder = new StringBuilder();
+        boolean capture = false;
+        for (String line : text.split("\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.equals(header)) {
+                capture = true;
+                continue;
+            }
+            if (capture && (trimmed.endsWith(":") || trimmed.startsWith("pause-all:"))) {
+                break;
+            }
+            if (capture && !trimmed.isEmpty()) {
+                if (builder.length() > 0) builder.append('\n');
+                builder.append(trimmed);
+            }
+        }
+        return builder.length() == 0 ? "无" : builder.toString();
+    }
+
+    private String translateNeighborState(String state) {
+        if ("REACHABLE".equals(state)) return "在线";
+        if ("STALE".equals(state)) return "最近在线";
+        if ("DELAY".equals(state) || "PROBE".equals(state)) return "探测中";
+        if ("FAILED".equals(state)) return "失效";
+        return state;
     }
 
     private String firstLine(String text) {
@@ -251,6 +476,14 @@ public class ClientsActivity extends Activity {
         params.setMargins(dp(4), 0, dp(4), 0);
         button.setLayoutParams(params);
         return button;
+    }
+
+    private GradientDrawable panelBg(int color, int stroke) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(8));
+        drawable.setStroke(dp(1), stroke);
+        return drawable;
     }
 
     private LinearLayout.LayoutParams marginTop(int width, int top) {
@@ -295,5 +528,12 @@ public class ClientsActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private static class ClientInfo {
+        String mac;
+        String ipv4;
+        String state;
+        int ipv6Count;
     }
 }
